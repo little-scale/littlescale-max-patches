@@ -1,9 +1,8 @@
 /*
-Take GPS as, output Open-Meteo current model data
+Take GPS as, output Open-Meteo current model data. No API key required!
 Send the message:
     set lat 37.7749
     set lon -122.4194
-    set apikey YOUR_API_KEY
 Then send:
     bang
 

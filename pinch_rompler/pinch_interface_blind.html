@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MediaPipe Hand Distances</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: black;
+    }
+  </style>
+</head>
+<body>
+  <video class="input_video" style="display:none;"></video>
+  <script>
+    const hands = new Hands({
+      locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    const PINCH_THRESHOLD = 0.05;
+
+    hands.onResults(results => {
+      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return;
+
+      const hand = results.multiHandLandmarks[0];
+      const index = hand[8];
+      const thumb = hand[4];
+
+      // Send all landmarks
+      const flat = hand.flatMap(pt => [pt.x, pt.y, pt.z]);
+      window.max?.outlet("/hand/landmarks", ...flat);
+
+      // Calculate 2D distances
+      const dx = index.x - thumb.x;
+      const dy = index.y - thumb.y;
+      const hyp = Math.sqrt(dx * dx + dy * dy);
+      const isPinching = hyp < PINCH_THRESHOLD;
+
+      // Output pinch state
+      window.max?.outlet("/hand/is_pinching", isPinching ? 1 : 0);
+
+      // Output distances
+      window.max?.outlet("/hand/distances", dx, dy, hyp);
+    });
+
+    const videoElement = document.querySelector('.input_video');
+
+    navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+      videoElement.srcObject = stream;
+      videoElement.play();
+      const camera = new Camera(videoElement, {
+        onFrame: async () => {
+          await hands.send({ image: videoElement });
+        },
+        width: 640,
+        height: 480
+      });
+      camera.start();
+    });
+  </script>
+</body>
+</html>

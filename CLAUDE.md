@@ -7,7 +7,7 @@ In this session we will be working with the file named SESSIONPROMPT.md in this 
 
 **Previous Session**: Completed `slewenv~` (formerly `maths-envelope~`) - a Make Noise Maths-style function generator/integrator external for Max/MSP. The project demonstrates advanced MSP inlet handling, real-time parameter control, and integrator-based envelope generation with curve shaping. **CRITICAL DISCOVERY**: MSP signal/float inlet conflicts where Max provides zero-signals to all `dsp_setup()` inlets, overriding float parameter values. Successfully renamed from `maths-envelope~` to `slewenv~` with full build and documentation update.
 
-**Current Session**: Completed `tide~` - a simplified Tides-based LFO external implementing Mutable Instruments Tides 2 core waveshaping algorithm. Key achievements: asymmetric ramp generator with variable slope control, 5 morphable shapes with smooth interpolation (linear/exponential/logarithmic/sine/arc-sine), dual-mode smoothness processing (2-pole Butterworth LPF + triangle wavefolder), three ramp modes (AD/Loop/AR), and comprehensive signal/float dual-inlet support. **NEW DISCOVERIES**: Advanced lookup table interpolation techniques, triangle wavefolder algorithms, and proper inlet configuration design patterns for LFO objects.
+**Current Session**: ✅ **COMPLETED** `tide~` - Mutable Instruments Tides-based LFO/envelope generator external. Successfully implemented C++ wrapper pattern for integrating complex DSP algorithms into Max externals. Key achievements: asymmetric ramp generator with variable slope control, shape morphing (exponential/linear/logarithmic curves), dual-mode smoothness (2-pole LPF + triangle wavefolder), three ramp modes (AD/Loop/AR), and proper signal/float dual-inlet support. **NEW DISCOVERIES**: C++ integration patterns via extern "C" wrappers, simplified Tides algorithm recreation, and universal binary build process for mixed C/C++ externals.
 
 Do not remove this section of this CLAUDE.md.
 
@@ -165,7 +165,7 @@ if (x->pole_count == 2) {
 | **`opuscodec~`** | Audio | ✅ Complete | Ring buffers, external libs, real-time codec | **Advanced** - frame-based processing |
 | **`slewenv~`** | Audio | ✅ Complete | Integrator-based envelopes, curve shaping | **MSP inlet handling** discovery |
 | **`harmosc~`** | Audio | ✅ Complete | Harmonic oscillator, wavetable synthesis, detuning | **Multi-argument parsing** patterns |
-| **`tide~`** | Audio | ✅ Complete | Tides-inspired LFO, asymmetric ramps, shape morphing | **Advanced waveshaping** algorithms |
+| **`tide~`** | Audio | ✅ Complete | Tides-inspired LFO, asymmetric ramps, shape morphing | **C++ integration** patterns |
 
 ### Development Challenges Solved
 
@@ -329,20 +329,44 @@ typedef struct _mynet {
 
 ### Multi-Language Projects
 
-**C++ Classes with Max Wrapper**:
+**C++ Classes with Max Wrapper** (from `tide~`):
 ```c
-// Constructor with C++ object
-void *myobject_new(...) {
-    x->cpp_engine = sysmem_newptr(sizeof(MyCppClass));
-    new (x->cpp_engine) MyCppClass();
-    ((MyCppClass*)x->cpp_engine)->Init();
+// C interface for C++ DSP classes
+extern "C" {
+    void* tides_create(void);
+    void tides_destroy(void* obj);
+    void tides_render(void* obj, /* parameters */);
 }
 
-// Destructor with C++ cleanup
-void myobject_free(t_myobject *x) {
-    if (x->cpp_engine) {
-        ((MyCppClass*)x->cpp_engine)->~MyCppClass();
-        sysmem_freeptr(x->cpp_engine);
+// Max external structure
+typedef struct _tide {
+    t_pxobject ob;
+    void* cpp_dsp_object;    // Opaque pointer to C++ object
+} t_tide;
+
+// Constructor
+void *tide_new(...) {
+    x->cpp_dsp_object = tides_create();
+}
+
+// Destructor  
+void tide_free(t_tide *x) {
+    if (x->cpp_dsp_object) {
+        tides_destroy(x->cpp_dsp_object);
+    }
+}
+```
+
+**C++ Wrapper Implementation**:
+```cpp
+// tides_wrapper.cpp - separate C++ file
+extern "C" {
+    void* tides_create(void) {
+        return new TidesClass();
+    }
+    
+    void tides_destroy(void* obj) {
+        delete static_cast<TidesClass*>(obj);
     }
 }
 ```

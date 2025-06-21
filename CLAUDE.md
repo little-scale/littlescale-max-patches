@@ -23,6 +23,10 @@ Do not remove this section of this CLAUDE.md.
 | Data processing/AI | Basic | `source/basics/` | `t_object ob` | `ext.h`, `ext_obex.h` | `latenttable/` |
 | Video/matrix processing | Matrix | `source/matrix/` | Dual structure | `jit.common.h` | `jit.simple/` |
 | Custom GUI elements | UI | `source/ui/` | `t_jbox` | `jgraphics.h` | `uisimp/` |
+| Multi-channel audio | MC | `source/mc/` | `t_pxobject ob` | `ext.h`, `z_dsp.h` | `mc.pack~/` |
+| Threading/collections | Advanced | `source/advanced/` | `t_object ob` | `ext.h`, `ext_systhread.h` | `threadpool/` |
+| General utilities | Misc | `source/misc/` | `t_object ob` | `ext.h` | `buddy/` |
+| OpenGL/3D graphics | GL | `source/gl/` | Dual structure | `jit.gl.h` | `jit.gl.cube/` |
 
 ### Essential Commands
 
@@ -39,10 +43,25 @@ cmake -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" ..
 cmake --build .
 ```
 
+**Build All Externals (Bulk Development)**
+```bash
+# Build everything from root
+mkdir build && cd build
+cmake -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" ..
+cmake --build . -j4
+
+# Verify all built externals
+ls ../externals/*.mxo
+```
+
 **Verify Build**
 ```bash
 ls ../../../externals/myexternal.mxo
 file ../../../externals/myexternal.mxo/Contents/MacOS/myexternal
+# Should show: Mach-O universal binary with 2 architectures
+
+# Codesign for M1/M2 Macs
+codesign --force --deep -s - ../../../externals/myexternal.mxo
 ```
 
 ### CMakeLists.txt Template
@@ -158,6 +177,8 @@ if (x->pole_count == 2) {
 | **Attribute System Failures** | **ABANDON** - use message handlers instead | Attributes unreliable, messages proven |
 | **Parameter Responsiveness** | Mathematical enhancement (20% cutoff reduction) | Subtle effects need amplification for audibility |
 | **Multi-Inlet Assist Strings** | Match inlet order carefully in `assist()` | Easy to swap inlet descriptions |
+| **Inlet Configuration Design** | Frequency on inlet 0 for LFO objects | More intuitive than trigger - matches user expectations |
+| **Proxy Inlet Pitfalls** | **AVOID** unnecessary `proxy_new()` calls | Creates extra visible inlets beyond `dsp_setup()` count |
 
 ---
 
@@ -201,6 +222,35 @@ double cv_resistance = calculate_cv_resistance(cv_input);
 x->resistance = fmin(envelope_resistance, cv_resistance);  // "Brighter wins"
 ```
 
+### Advanced Waveshaping Patterns (from tide~)
+```c
+// Multi-table lookup with shape morphing
+double shape_index = shape_param * (NUM_SHAPES - 1);
+int shape_a = (int)shape_index;
+int shape_b = shape_a + 1;
+double shape_mix = shape_index - shape_a;
+
+// Interpolate between lookup tables
+double val_a = x->shape_lut[shape_a][index] * (1.0 - fract) + 
+               x->shape_lut[shape_a][index + 1] * fract;
+double val_b = x->shape_lut[shape_b][index] * (1.0 - fract) + 
+               x->shape_lut[shape_b][index + 1] * fract;
+double result = val_a * (1.0 - shape_mix) + val_b * shape_mix;
+```
+
+### Triangle Wavefolder Algorithm
+```c
+// Proper folding that maintains ±1 output range
+double folded = input * gain;
+while (folded > 1.0 || folded < -1.0) {
+    if (folded > 1.0) {
+        folded = 2.0 - folded;      // Fold down from ceiling
+    } else if (folded < -1.0) {
+        folded = -2.0 - folded;     // Fold up from floor
+    }
+}
+```
+
 ---
 
 ## Troubleshooting
@@ -210,12 +260,18 @@ x->resistance = fmin(envelope_resistance, cv_resistance);  // "Brighter wins"
 - External won't load → `codesign --force --deep -s - external.mxo`
 - CMake errors → Use Unix Makefiles (default), not Xcode
 - Architecture issues → Use universal binary build
+- `error: 'MaxAudioAPI.h' file not found` → Check max-sdk-base submodule
+- Wrong architecture → Ensure universal binary build
 
 **Runtime Issues**  
 - Parameters not working → MSP signal/float conflict - force float values
 - Division by zero crashes → Clamp parameters above 0.01 for divisors
 - Clicking in audio → Implement ring buffer system
 - Attributes not working → Use message handlers instead
+- Too many inlets showing → Remove unnecessary `proxy_new()` calls
+- LFO inlet confusion → Put frequency on inlet 0, not trigger
+- External loads but no audio → Check `dsp_setup()` inlet count
+- Segfaults on load → Check object lifecycle (new/free functions)
 
 ---
 
@@ -226,16 +282,88 @@ x->resistance = fmin(envelope_resistance, cv_resistance);  // "Brighter wins"
 - Not git repository - manual max-sdk-base download
 - Build location: `externals/[external].mxo`
 
-**File Locations**
-- Source: `source/[category]/[external]/`  
-- Headers: `source/max-sdk-base/c74support/`
-- Help: `help/[external].maxhelp`
+**Repository Navigation**
+
+*Key Directories*:
+- `source/[category]/[external]/` - Source code and CMakeLists.txt
+- `externals/` - Built `.mxo` files (output directory)
+- `help/` - `.maxhelp` documentation files
+- `source/max-sdk-base/` - Core SDK (headers, scripts)
+- `projects/` - Complex multi-file projects
+- `tides_source/` - Reference implementation code
+
+*File Patterns*:
+- CMakeLists.txt in each external directory
+- Help files match external names: `myext~.maxhelp`
+- Build artifacts go to `externals/myext.mxo`
 
 **Ready Examples**
 - `source/audio/pinknoise~/` - basic audio
 - `source/basics/latenttable/` - neural network  
 - `source/audio/opuscodec~/` - advanced codec
 - `source/ui/uisimp/` - user interface
+
+---
+
+## Advanced Integration Patterns
+
+### Python Neural Networks (from `latenttable`, `euclid-space-mlp`)
+
+**Workflow**: PyTorch → Weight Export → C++ Inference → Max External
+
+```cpp
+// Pattern from latenttable and rhythm externals
+typedef struct _mynet {
+    t_object ob;                    // Basic object base (NOT t_pxobject)
+    MyNetwork *network;             // C++ inference class
+    float *weights;                // Pre-loaded binary weights
+} t_mynet;
+
+// Implementation steps:
+// 1. Train in PyTorch
+// 2. Export weights with convert_pytorch_weights.py  
+// 3. Load binary weights in C++
+// 4. Implement pure C++ inference class
+// 5. Wrap in Max external
+```
+
+### Multi-Language Projects
+
+**C++ Classes with Max Wrapper**:
+```c
+// Constructor with C++ object
+void *myobject_new(...) {
+    x->cpp_engine = sysmem_newptr(sizeof(MyCppClass));
+    new (x->cpp_engine) MyCppClass();
+    ((MyCppClass*)x->cpp_engine)->Init();
+}
+
+// Destructor with C++ cleanup
+void myobject_free(t_myobject *x) {
+    if (x->cpp_engine) {
+        ((MyCppClass*)x->cpp_engine)->~MyCppClass();
+        sysmem_freeptr(x->cpp_engine);
+    }
+}
+```
+
+### Testing & Validation
+
+**Build Verification**:
+```bash
+# Check universal binary
+file externals/myext.mxo/Contents/MacOS/myext
+# Should show: Mach-O universal binary with 2 architectures
+
+# Test external loading
+# Load in Max, check for errors in console
+```
+
+**Help File Validation**:
+- Help files should be in `help/[external].maxhelp`
+- Test all inlets and parameters
+- Include audio examples for audio externals
+- Verify assist strings match actual inlets
 
 ---
 
